@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+/* Hero fade-in animations */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(32px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@utility animate-fade-in-up {
+  animation: fade-in-up 0.75s ease-out forwards;
+}
+
+@utility animate-fade-in-right {
+  animation: fade-in-right 0.9s ease-out forwards;
+}
+
+@utility animate-delay-150 {
+  animation-delay: 150ms;
+}
+
+@utility animate-delay-300 {
+  animation-delay: 300ms;
+}
+
+@utility animate-delay-450 {
+  animation-delay: 450ms;
+}
+
+@utility animate-delay-600 {
+  animation-delay: 600ms;
+}
+
+@utility opacity-0-start {
+  opacity: 0;
+}
