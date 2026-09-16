@@ -11,10 +11,23 @@ const app = express();
 // Allow the Vite dev server to call this API.
 // In production, restrict this to your deployed frontend origin
 // via the FRONTEND_URL env var instead of leaving it open.
-const allowedOrigin = process.env.FRONTEND_URL || "http://localhost:5173";
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://career-pilot-green.vercel.app",
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: allowedOrigin,
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`Not allowed by CORS: ${origin}`));
+    },
     credentials: true,
   })
 );
