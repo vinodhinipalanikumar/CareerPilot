@@ -8,6 +8,7 @@ import HowItWorks from "./pages/HowItWorks";
 import ResumeBuilder from "./pages/ResumeBuilder";
 import ATSAnalysis from "./pages/ATSAnalysis";
 import CareerGuidance from "./pages/CareerGuidance";
+import JobRecommendations from "./pages/JobRecommendations";
 import MockInterview from "./pages/MockInterview";
 import ResumePreview from "./components/ResumePreview";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -61,7 +62,23 @@ function App() {
         }
       />
       <Route
+        path="/job-recommendations"
+        element={
+          <ProtectedRoute>
+            <JobRecommendations />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/mock-interview"
+        element={
+          <ProtectedRoute>
+            <MockInterview />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/mock-interview/:sessionId"
         element={
           <ProtectedRoute>
             <MockInterview />

@@ -1,3 +1,4 @@
+
 require("dotenv").config();
 
 const express = require("express");
@@ -5,6 +6,8 @@ const cors = require("cors");
 const connectDB = require("./config/db");
 const authRoutes = require("./routes/authRoutes");
 const resumeRoutes = require("./routes/resumeRoutes");
+const interviewRoutes = require("./routes/interviewRoutes");
+const jobRoutes = require("./routes/jobRoutes");
 
 const app = express();
 
@@ -13,6 +16,7 @@ const app = express();
 // via the FRONTEND_URL env var instead of leaving it open.
 const allowedOrigins = [
   "http://localhost:5173",
+"http://localhost:5174",
   "https://career-pilot-green.vercel.app",
   process.env.FRONTEND_URL,
 ].filter(Boolean);
@@ -40,6 +44,8 @@ app.get("/api/health", (req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/resumes", resumeRoutes);
+app.use("/api/interviews", interviewRoutes);
+app.use("/api/jobs", jobRoutes);
 
 // Fallback 404 handler
 app.use((req, res) => {

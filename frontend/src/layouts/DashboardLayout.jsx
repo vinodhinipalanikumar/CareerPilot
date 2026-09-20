@@ -11,7 +11,7 @@
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
-  LayoutDashboard, FileText, ScanSearch, Compass, Mic,
+  LayoutDashboard, FileText, ScanSearch, Compass, Mic, Briefcase,
   LogOut, Menu, X, Rocket,
 } from "lucide-react";
 import { getUser, logout } from "../utils/auth";
@@ -21,6 +21,7 @@ const NAV_ITEMS = [
   { label: "Resume Builder", to: "/resume-builder", icon: FileText },
   { label: "ATS Analysis", to: "/ats-analysis", icon: ScanSearch },
   { label: "Career Guidance", to: "/career-guidance", icon: Compass },
+  { label: "Job Recommendations", to: "/job-recommendations", icon: Briefcase },
   { label: "Mock Interview", to: "/mock-interview", icon: Mic },
 ];
 

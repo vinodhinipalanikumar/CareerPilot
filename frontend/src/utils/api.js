@@ -55,3 +55,27 @@ export const resumesAPI = {
   delete: (id) =>
     request(`/api/resumes/${id}`, { method: "DELETE", token: getToken() }),
 };
+
+// Authenticated CRUD calls for the logged-in user's Mock Interview sessions.
+// Question generation and answer evaluation happen on the frontend (see
+// src/utils/mock-interview/) — these calls just persist/retrieve that data,
+// same pattern as resumesAPI above.
+export const interviewAPI = {
+  getAll: () => request("/api/interviews", { token: getToken() }),
+  getById: (id) => request(`/api/interviews/${id}`, { token: getToken() }),
+  create: (data) =>
+    request("/api/interviews", { method: "POST", body: data, token: getToken() }),
+  update: (id, data) =>
+    request(`/api/interviews/${id}`, { method: "PUT", body: data, token: getToken() }),
+};
+
+// Job Recommendations: live, resume-specific job search. All provider
+// credentials (Jooble/Adzuna) stay server-side — the frontend only ever
+// sends the resume context + filters and gets back normalized results.
+// POST (not GET) because the "upload a resume" path has to carry an
+// already-parsed resume object that's too large/unwieldy for a query
+// string — see backend/controllers/jobController.js for the full reasoning.
+export const jobsAPI = {
+  search: (payload) =>
+    request("/api/jobs/search", { method: "POST", body: payload, token: getToken() }),
+};
