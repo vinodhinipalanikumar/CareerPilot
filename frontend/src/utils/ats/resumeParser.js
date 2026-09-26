@@ -45,6 +45,112 @@ const HEADING_PATTERNS = {
 
 const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
 const PHONE_PATTERN = /(\+?\d[\d\s().-]{8,}\d)/;
+
+// --- Professional link extraction (GitHub / LinkedIn / portfolio) ---------
+//
+// ROOT CAUSE of the "GitHub reported as missing when the resume clearly has
+// one" bug: this function previously didn't attempt to find these links AT
+// ALL — extractPersonalInfo() only ever returned fullName/email/phone/
+// summary, so personalInfo.github/linkedin/portfolio were always empty for
+// every uploaded resume, regardless of what the document actually contains.
+// (structureAnalyzer.js's "no professional link found" check was correct —
+// it just never had a github/linkedin/portfolio value to check in the
+// first place.)
+//
+// Real-world resumes write these many different ways, so this handles:
+//   - Full URLs, with or without protocol/www: "https://github.com/user",
+//     "github.com/user", "www.github.com/user"
+//   - A labeled line with just a handle: "GitHub: username", "GitHub -
+//     username", "LinkedIn – jane-doe"
+//   - A labeled line with a full URL: "GitHub: https://github.com/user"
+//   - Links whose visible hyperlink TEXT differs from the URL (e.g. a
+//     "GitHub" icon linking to the real address) — fileParsers.js now
+//     appends every PDF annotation / DOCX <a href> target as its own plain
+//     line specifically so this scan can still find them.
+const GITHUB_URL_PATTERN = /(https?:\/\/)?(www\.)?github\.com\/([a-z0-9][a-z0-9-]{0,38})(?:\/[^\s,;)"']*)?/i;
+const LINKEDIN_URL_PATTERN = /(https?:\/\/)?(www\.)?linkedin\.com\/(in|pub)\/([a-z0-9\-_%]+)(?:\/[^\s,;)"']*)?/i;
+// Negative lookbehind for "@" so the domain half of an email address
+// (e.g. "jane@example.com") is never mistaken for a standalone portfolio
+// URL — without it, virtually every resume's email address would get
+// reported as the candidate's "portfolio" site.
+const GENERIC_URL_PATTERN = /\b(?<!@)((https?:\/\/)?(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/[^\s,;)"'<>]*)?)/gi;
+const GITHUB_LABEL_PATTERN = /^(github)\s*[:\-–—]\s*(.+)$/i;
+const LINKEDIN_LABEL_PATTERN = /^(linkedin)\s*[:\-–—]\s*(.+)$/i;
+const PORTFOLIO_LABEL_PATTERN = /^(portfolio|personal website|website)\s*[:\-–—]\s*(.+)$/i;
+
+function stripTrailingPunctuation(url) {
+  return url.replace(/[.,;:)\]}>'"]+$/, "");
+}
+
+function withProtocol(url) {
+  const cleaned = stripTrailingPunctuation(url.trim());
+  if (!cleaned) return "";
+  return /^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`;
+}
+
+/** A domain we should never mistake for someone's personal portfolio site —
+ *  mainly common email/webmail providers that can otherwise show up in a
+ *  generic URL scan via a stray "@gmail.com" fragment. */
+const NON_PORTFOLIO_HOST_HINTS = ["gmail.", "yahoo.", "outlook.", "hotmail.", "icloud."];
+
+function looksLikePortfolioUrl(url) {
+  const lower = url.toLowerCase();
+  if (lower.includes("github.com") || lower.includes("linkedin.com")) return false;
+  if (NON_PORTFOLIO_HOST_HINTS.some((h) => lower.includes(h))) return false;
+  return true;
+}
+
+/** Scan the full resume text (all lines + the whole blob, so it works
+ *  whether the link sits on its own line, inline with other contact info,
+ *  or was appended by fileParsers.js from a PDF/DOCX hyperlink target) for
+ *  GitHub / LinkedIn / portfolio links. Never invents a link that isn't
+ *  actually present in the text. */
+function extractProfessionalLinks(lines, fullText) {
+  let github = "";
+  let linkedin = "";
+  let portfolio = "";
+
+  // Pass 1 — explicit labeled lines are the highest-confidence signal.
+  for (const line of lines) {
+    if (!github) {
+      const m = line.match(GITHUB_LABEL_PATTERN);
+      if (m) {
+        const value = m[2].trim();
+        github = /github\.com/i.test(value) ? withProtocol(value) : `https://github.com/${value.replace(/^@/, "")}`;
+      }
+    }
+    if (!linkedin) {
+      const m = line.match(LINKEDIN_LABEL_PATTERN);
+      if (m) {
+        const value = m[2].trim();
+        linkedin = /linkedin\.com/i.test(value) ? withProtocol(value) : `https://www.linkedin.com/in/${value.replace(/^@/, "")}`;
+      }
+    }
+    if (!portfolio) {
+      const m = line.match(PORTFOLIO_LABEL_PATTERN);
+      if (m) portfolio = withProtocol(m[2].trim());
+    }
+  }
+
+  // Pass 2 — a bare URL anywhere in the document (own line, inline in the
+  // header, or appended from a hyperlink annotation whose visible text
+  // didn't contain the URL at all).
+  if (!github) {
+    const m = fullText.match(GITHUB_URL_PATTERN);
+    if (m) github = withProtocol(m[0]);
+  }
+  if (!linkedin) {
+    const m = fullText.match(LINKEDIN_URL_PATTERN);
+    if (m) linkedin = withProtocol(m[0]);
+  }
+  if (!portfolio) {
+    const matches = fullText.match(GENERIC_URL_PATTERN) || [];
+    const candidate = matches.find(looksLikePortfolioUrl);
+    if (candidate) portfolio = withProtocol(candidate);
+  }
+
+  return { github, linkedin, portfolio };
+}
 const DATE_RANGE_PATTERN =
   /\b((jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{1,2}\/\d{4}|\d{4})\s*(-|–|—|to)\s*(present|current|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|\d{1,2}\/\d{4}|\d{4})/i;
 const NUMBERED_LINE_PATTERN = /^\d+[.)]\s*/;
@@ -142,13 +248,17 @@ function guessFullName(headerLines) {
   return candidate || "";
 }
 
-function extractPersonalInfo(headerLines, fullText) {
+function extractPersonalInfo(headerLines, fullText, allLines) {
   const emailMatch = fullText.match(EMAIL_PATTERN);
   const phoneMatch = fullText.match(PHONE_PATTERN);
+  const { github, linkedin, portfolio } = extractProfessionalLinks(allLines, fullText);
   return {
     fullName: guessFullName(headerLines),
     email: emailMatch ? emailMatch[0] : "",
     phone: phoneMatch ? phoneMatch[0].trim() : "",
+    github,
+    linkedin,
+    portfolio,
     summary: "",
   };
 }
@@ -247,7 +357,7 @@ export function parseResumeText(rawText, formatRisk = null) {
   const sections = splitSections(lines);
   const parseWarnings = [];
 
-  const personalInfo = extractPersonalInfo(sections.header || [], text);
+  const personalInfo = extractPersonalInfo(sections.header || [], text, lines);
   if (sections.summary?.length) {
     personalInfo.summary = sections.summary.join(" ");
   }

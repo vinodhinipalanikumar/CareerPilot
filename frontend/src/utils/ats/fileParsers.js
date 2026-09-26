@@ -29,14 +29,43 @@ async function extractPdfText(file) {
   }
 
   let text = "";
+  const linkUrls = new Set();
   try {
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
       const page = await pdf.getPage(pageNum);
       const content = await page.getTextContent();
       text += `${reconstructLines(content.items)}\n`;
+
+      // A clickable hyperlink's visible TEXT (e.g. a "GitHub" icon/word, or
+      // display text that differs from the URL) never contains the actual
+      // URL — that only lives in the PDF's link annotation. getTextContent()
+      // above only ever sees the rendered glyphs, so without this, a resume
+      // whose GitHub/LinkedIn link is styled as an icon or as text like
+      // "My GitHub Profile" would have that URL silently lost, and every
+      // downstream "is there a GitHub link?" check would wrongly say no
+      // even though the resume genuinely has one.
+      try {
+        const annotations = await page.getAnnotations();
+        annotations.forEach((a) => {
+          if (a?.subtype === "Link" && typeof a.url === "string" && a.url) {
+            linkUrls.add(a.url);
+          }
+        });
+      } catch {
+        // Best-effort — a page with unreadable annotations just contributes
+        // no extra links; visible-text extraction above is unaffected.
+      }
     }
   } catch {
     throw new Error("This PDF's content could not be read. It may be corrupted.");
+  }
+
+  // Append every hyperlink target found in annotations as its own line so
+  // resumeParser.js's link-detection regexes (which scan plain text) pick
+  // these up exactly the same way as a URL that was already visible as
+  // text on the page.
+  if (linkUrls.size > 0) {
+    text += `\n${Array.from(linkUrls).join("\n")}\n`;
   }
 
   if (text.trim().length < MIN_EXTRACTED_TEXT_LENGTH) {
@@ -104,9 +133,32 @@ async function extractDocxText(file) {
     throw new Error("This DOCX file could not be opened. It may be corrupted or not a valid Word document.");
   }
 
-  const text = result?.value || "";
+  let text = result?.value || "";
   if (text.trim().length < MIN_EXTRACTED_TEXT_LENGTH) {
     throw new Error("No readable text was found in this DOCX file. Please check the file and try again.");
+  }
+
+  // `extractRawText` returns plain text only — it drops every hyperlink's
+  // actual target, keeping just the visible display text. A GitHub/LinkedIn
+  // link whose display text is a name, an icon, or "Click here" would
+  // otherwise vanish entirely. `convertToHtml` (same file, no re-parse of
+  // disk) preserves <a href> targets, so pull those out and append them as
+  // plain-text lines for resumeParser.js's link regexes to find.
+  try {
+    const arrayBuffer2 = await file.arrayBuffer();
+    const { value: html } = await mammoth.convertToHtml({ arrayBuffer: arrayBuffer2 });
+    const hrefs = new Set();
+    const hrefPattern = /<a\s+[^>]*href=["']([^"']+)["']/gi;
+    let match;
+    while ((match = hrefPattern.exec(html)) !== null) {
+      if (match[1] && !match[1].startsWith("#")) hrefs.add(match[1]);
+    }
+    if (hrefs.size > 0) {
+      text += `\n${Array.from(hrefs).join("\n")}\n`;
+    }
+  } catch {
+    // Best-effort — if this fails, we still return the raw text extracted
+    // above rather than failing the whole upload.
   }
 
   return text;

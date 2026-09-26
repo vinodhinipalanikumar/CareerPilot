@@ -14,14 +14,47 @@ import { resumesAPI } from "../utils/api";
 // print destination handles pagination, keeps text selectable/readable,
 // and @page here pins it to A4. This stylesheet only exists in the DOM
 // while this page is mounted, so it never affects printing elsewhere.
+//
+// ROOT CAUSE OF THE "WHITE/BLANK RESUME" BUG:
+// The preview layout wraps the templates panel in a fixed-height,
+// `overflow-y-auto` scroll container (see the JSX below:
+// `md:h-[calc(100vh-220px)]` / `md:overflow-y-auto`) so the templates list
+// and the resume preview can scroll independently on screen. `visibility:
+// hidden`/`visible` does NOT remove that ancestor's overflow clipping, and
+// making #resume-document `position: absolute` does NOT escape it either
+// (an element is still clipped by any ancestor's non-visible overflow,
+// regardless of its own position). The browser's print engine does not
+// expand `overflow: auto` containers to fit their content — it only
+// rasterizes whatever fits in the box's set height. Net effect: any resume
+// taller than one screen's worth (long project descriptions, many
+// sections, certain templates) got silently cut off — appearing blank/
+// white below the fold, sometimes entirely blank if scrolled away from the
+// top when Save-as-PDF was triggered.
+// FIX: explicitly reset overflow/height/max-height to visible/auto/none on
+// the scroll wrapper (#resume-scroll-area, added on the JSX below) and its
+// descendants for print, in addition to the existing visibility trick.
 const PRINT_STYLES = `
   @media print {
     body * { visibility: hidden; }
     #resume-document, #resume-document * { visibility: visible; }
+
+    /* Neutralize every ancestor's fixed height / scroll clipping so the
+       full resume (not just what was scrolled into view) is printed. */
+    html, body {
+      height: auto !important;
+      overflow: visible !important;
+    }
+    #resume-scroll-area, #resume-scroll-area * {
+      overflow: visible !important;
+      height: auto !important;
+      max-height: none !important;
+    }
+
     #resume-document {
       position: absolute;
       top: 0;
       left: 0;
+      width: 100% !important;
       margin: 0 !important;
       box-shadow: none !important;
     }
@@ -100,8 +133,29 @@ export default function ResumePreview() {
 
   // Case 2 above: no router state, but a saved resume id in the URL —
   // load it from MongoDB.
+  //
+  // BUG FIX (same class as ResumeBuilder.jsx's resumeIdRef bug): navigating
+  // client-side from /resume-preview/A straight to /resume-preview/B (e.g.
+  // two "View" links clicked in a row from the Dashboard) reuses this same
+  // component instance — no remount. `resumeId` state was only ever
+  // initialized ONCE from the URL (`useState(stateData?.resumeId ||
+  // routeResumeId || null)`) and never resynced afterwards, so after
+  // loading B's formData here, `resumeId` still held A's id. Clicking
+  // "Save Resume" then called `resumesAPI.update(A's id, { formData: B's
+  // data })`, silently overwriting Resume A with Resume B's content.
+  // Fix: explicitly resync `resumeId` to the current route param here,
+  // and never save while a fetch for a *different* resume is still
+  // in-flight (the `cancelled` guard below already protects formData; the
+  // same guard now protects resumeId).
   useEffect(() => {
-    if (stateData || !routeResumeId) return;
+    if (stateData) return;
+
+    if (!routeResumeId) {
+      setResumeId(null);
+      return;
+    }
+
+    setResumeId(routeResumeId);
 
     let cancelled = false;
     setLoadingSavedResume(true);
@@ -296,7 +350,7 @@ export default function ResumePreview() {
         {/* Independent-scroll panes: scrolling templates never moves the
             preview, and vice versa. Falls back to normal stacked scroll
             on small screens. */}
-        <div className="md:flex md:gap-8 md:h-[calc(100vh-220px)]">
+        <div id="resume-scroll-area" className="md:flex md:gap-8 md:h-[calc(100vh-220px)]">
           <div className="md:w-[280px] md:shrink-0 md:h-full md:overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-sm p-6 mb-8 md:mb-0">
             <h2 className="text-lg font-semibold text-gray-800 mb-3">Templates</h2>
             <ResumeTemplates

@@ -86,25 +86,55 @@ export default function ResumeBuilder() {
     }
   }, [navigate, setResumeIdEverywhere]);
 
-  // On mount: if we're editing a saved resume (route has :resumeId), load
-  // it from MongoDB. A brand-new resume (no :resumeId) always starts blank
-  // — it must never preload another resume's data.
+  // On mount AND whenever the route's :resumeId changes: if we're editing a
+  // saved resume, load it from MongoDB. A brand-new resume (no :resumeId)
+  // always starts blank — it must never preload another resume's data.
+  //
+  // BUG FIX (Resume A / Resume B overwrite each other):
+  // React Router reuses this same component instance when navigating
+  // between /resume-builder/:idA and /resume-builder/:idB (no remount), so
+  // `resumeIdRef` — previously only ever set once at initial mount, or
+  // after a brand-new create — kept pointing at whichever resume was
+  // loaded FIRST. Autosave then kept PUTting the newly-loaded resume's
+  // formData onto the OLD resume's `_id`, silently overwriting it.
+  // Fix: explicitly resync resumeIdRef.current to the current route param
+  // on every change, synchronously and before anything async, and drop
+  // `hydrated` back to false (blocking autosave — see the effect below)
+  // until the newly-selected resume's data has actually finished loading,
+  // so a stale in-flight formData/timer from the PREVIOUS resume can never
+  // be saved under the NEW resumeIdRef either.
   useEffect(() => {
     let cancelled = false;
 
+    resumeIdRef.current = routeResumeId || null;
+
+    // Any pending autosave belongs to the resume we were just editing —
+    // never let it fire against the new one (or the old one, once its id
+    // has been reassigned above).
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    saveVersionRef.current += 1;
+
     if (!routeResumeId) {
+      // Brand-new resume: always start fully blank, never carry over
+      // whatever the previously-edited resume's state was.
+      setFormData(buildInitialState(resumeSections));
+      setSelectedFont("Arial");
+      setTitle(null);
+      setTemplateId("professional-classic");
+      setSaveStatus("");
       setHydrated(true);
       return;
     }
 
+    setHydrated(false);
     (async () => {
       try {
         const data = await resumesAPI.getById(routeResumeId);
         const saved = data?.resume;
         if (!cancelled && saved) {
           setFormData(saved.formData || buildInitialState(resumeSections));
-          if (saved.font) setSelectedFont(saved.font);
-          if (saved.templateId) setTemplateId(saved.templateId);
+          setSelectedFont(saved.font || "Arial");
+          setTemplateId(saved.templateId || "professional-classic");
           setTitle(saved.title || "My Resume");
         }
       } catch {

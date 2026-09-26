@@ -17,7 +17,7 @@
 // funnel through this ONE backend extraction function.
 
 const { ROLE_RULES } = require("../data/roleRules");
-const { scanTextForSkills } = require("../data/skillVocabulary");
+const { scanTextForSkills, canonicalizeSkill } = require("../data/skillVocabulary");
 
 function arr(v) {
   return Array.isArray(v) ? v : [];
@@ -33,10 +33,19 @@ function extractJobProfile(resume) {
   // --- Skills: explicit Skills-section entries + anything scanned out of
   // project/experience free text (covers a skill used in a project but never
   // separately listed). ---
+  // ROOT CAUSE FIX: explicit Skills-section entries used to go into the
+  // profile as a raw lowercased string ("react.js", "mongo", "node") while
+  // everything scanned out of project/experience text (scanTextForSkills)
+  // was already canonical ("react", "mongodb", "node.js") — so the exact
+  // same skill, spelled two different ways, silently failed to match
+  // itself against job postings and role rules. Canonicalizing here puts
+  // both sources on the same footing. Skills the vocabulary doesn't
+  // recognize are kept as-is (never dropped) so they still count for
+  // matching purposes.
   const skillSet = new Set();
   arr(data.skills).forEach((s) => {
     const name = str(s?.skillName);
-    if (name) skillSet.add(name.toLowerCase());
+    if (name) skillSet.add(canonicalizeSkill(name));
   });
 
   const projectTitles = [];
