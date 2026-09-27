@@ -71,8 +71,16 @@ const GITHUB_URL_PATTERN = /(https?:\/\/)?(www\.)?github\.com\/([a-z0-9][a-z0-9-
 const LINKEDIN_URL_PATTERN = /(https?:\/\/)?(www\.)?linkedin\.com\/(in|pub)\/([a-z0-9\-_%]+)(?:\/[^\s,;)"']*)?/i;
 // Negative lookbehind for "@" so the domain half of an email address
 // (e.g. "jane@example.com") is never mistaken for a standalone portfolio
-// URL — without it, virtually every resume's email address would get
-// reported as the candidate's "portfolio" site.
+// URL. Deliberately NOT also using a trailing `(?!@)` lookahead to guard
+// against an email's LOCAL part (e.g. "priya.sharma" in
+// "priya.sharma@example.com", which otherwise matches the domain-shape
+// pattern perfectly) — a negative lookahead right after a greedy `+`
+// quantifier just makes the regex engine backtrack the match one
+// character shorter instead of rejecting it outright (matching
+// "priya.sharm", not rejecting "priya.sharma"). That's filtered out
+// afterwards instead — see the `nextChar !== "@"` check in
+// extractProfessionalLinks() below, which looks at the real character
+// following each match in the original text.
 const GENERIC_URL_PATTERN = /\b(?<!@)((https?:\/\/)?(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/[^\s,;)"'<>]*)?)/gi;
 const GITHUB_LABEL_PATTERN = /^(github)\s*[:\-–—]\s*(.+)$/i;
 const LINKEDIN_LABEL_PATTERN = /^(linkedin)\s*[:\-–—]\s*(.+)$/i;
@@ -93,11 +101,40 @@ function withProtocol(url) {
  *  generic URL scan via a stray "@gmail.com" fragment. */
 const NON_PORTFOLIO_HOST_HINTS = ["gmail.", "yahoo.", "outlook.", "hotmail.", "icloud."];
 
+// A resume is full of "word.word"-shaped text that is NOT a URL at all —
+// degree abbreviations ("B.Tech", "M.Sc"), Latin abbreviations ("e.g.",
+// "i.e."), version numbers, etc. — and the generic domain-shape regex above
+// matches all of them just as happily as a real domain. Requiring an
+// explicit protocol/"www." OR a real, common TLD is what tells "johndoe.dev"
+// (a real personal-site pattern) apart from "B.Tech" (two capitalized
+// syllables that merely happen to contain a dot).
+const COMMON_TLDS = new Set([
+  "com", "dev", "io", "me", "in", "co", "app", "tech", "xyz", "info", "design",
+  "site", "page", "work", "studio", "art", "blog", "codes", "org", "net",
+  "vercel", "netlify", "github", "gitlab", "cv", "pro", "space", "online",
+]);
+
+function hasRecognizedPortfolioShape(url) {
+  const stripped = url.replace(/^https?:\/\//i, "");
+  if (/^https?:\/\//i.test(url) || /^www\./i.test(stripped)) return true; // explicit signal
+  // No explicit protocol/www: this is the branch that can collide with
+  // ordinary resume text shaped like "word.word" (degree abbreviations
+  // like "B.Tech"/"M.Sc", "e.g.", version numbers...). Real bare domains
+  // are essentially always written lowercase in resumes ("johndoe.dev"),
+  // while those abbreviations are capitalized — so require the match to be
+  // all-lowercase as actually written, on top of a recognized TLD.
+  if (url !== url.toLowerCase()) return false;
+  const hostOnly = stripped.split("/")[0];
+  const labels = hostOnly.split(".");
+  const tld = labels[labels.length - 1]?.toLowerCase();
+  return COMMON_TLDS.has(tld);
+}
+
 function looksLikePortfolioUrl(url) {
   const lower = url.toLowerCase();
   if (lower.includes("github.com") || lower.includes("linkedin.com")) return false;
   if (NON_PORTFOLIO_HOST_HINTS.some((h) => lower.includes(h))) return false;
-  return true;
+  return hasRecognizedPortfolioShape(url);
 }
 
 /** Scan the full resume text (all lines + the whole blob, so it works
@@ -144,7 +181,9 @@ function extractProfessionalLinks(lines, fullText) {
     if (m) linkedin = withProtocol(m[0]);
   }
   if (!portfolio) {
-    const matches = fullText.match(GENERIC_URL_PATTERN) || [];
+    const matches = Array.from(fullText.matchAll(GENERIC_URL_PATTERN))
+      .filter((m) => fullText[m.index + m[0].length] !== "@") // see comment on GENERIC_URL_PATTERN
+      .map((m) => m[0]);
     const candidate = matches.find(looksLikePortfolioUrl);
     if (candidate) portfolio = withProtocol(candidate);
   }

@@ -68,7 +68,21 @@ export default function CareerGuidance() {
 
   // When the user has more than one saved MongoDB resume, let them choose
   // which one to use instead of always using whichever was last edited.
-  const { resumes: savedResumes } = useSavedResumes(resumeSource === "careerpilot");
+  //
+  // BUG FIX (source-of-truth race): `effectiveCareerPilotFormData` below
+  // used to fall back to the single global localStorage snapshot
+  // (`careerPilotFormData`) any time `selectedSavedResumeData` was still
+  // undefined — which is true for a brief window on every visit, before
+  // `useSavedResumes`'s fetch resolves and the auto-select effect below
+  // picks a resume. `readyToAnalyze` had no gate on that loading state
+  // either, so the "Ready to analyze" button could appear (and be
+  // clicked) while `profile` was still built from localStorage's
+  // last-edited resume — which may not be the resume the user actually
+  // has/intends to analyze if they have multiple saved resumes. Now the
+  // localStorage fallback only applies once we positively know there are
+  // zero MongoDB-saved resumes (fetch finished AND the list is empty),
+  // and `readyToAnalyze` waits out the loading window entirely.
+  const { resumes: savedResumes, loading: savedResumesLoading } = useSavedResumes(resumeSource === "careerpilot");
   const [selectedSavedResumeId, setSelectedSavedResumeId] = useState(null);
   useEffect(() => {
     if (savedResumes.length > 0 && !selectedSavedResumeId) {
@@ -76,7 +90,9 @@ export default function CareerGuidance() {
     }
   }, [savedResumes, selectedSavedResumeId]);
   const selectedSavedResumeData = savedResumes.find((r) => r.id === selectedSavedResumeId)?.formData;
-  const effectiveCareerPilotFormData = selectedSavedResumeData || careerPilotFormData;
+  const hasNoSavedMongoResumes = !savedResumesLoading && savedResumes.length === 0;
+  const effectiveCareerPilotFormData =
+    selectedSavedResumeData || (hasNoSavedMongoResumes ? careerPilotFormData : null);
 
   const [uploadedFile, setUploadedFile] = useState(null);
   const [uploadError, setUploadError] = useState("");
@@ -176,11 +192,31 @@ export default function CareerGuidance() {
     }
   }, [analyzed, profile]);
 
-  const topMatches = allMatches.slice(0, TOP_N);
+  // ROOT CAUSE FIX ("do not generate unrelated roles" — Problem 8): this
+  // used to always slice the top 5 scored roles, full stop. The scoring
+  // itself (careerMatcher.js) is honest and evidence-based — it isn't
+  // fabricating anything — but a resume with a narrow, specific skill set
+  // (e.g. only Flutter/Dart/Firebase) only has ONE genuinely strong match
+  // in the role dataset; the other 4 slots got filled with roles that
+  // scored 13-18% purely because they share a generic degree field or one
+  // incidental tool (e.g. Git), which the UI then presented under "Top
+  // Career Recommendations" — technically transparent (the low % badge is
+  // shown), but still amounts to recommending roles the resume doesn't
+  // actually support. Filtering to a minimum relevance floor keeps the
+  // list honest: only roles that clear a real relevance bar are shown,
+  // and if literally none do (a very sparse resume), the single best
+  // match is still shown rather than an empty page.
+  const MIN_RELEVANT_MATCH_PERCENT = 25;
+  const relevantMatches = allMatches.filter((m) => m.matchPercent >= MIN_RELEVANT_MATCH_PERCENT);
+  const topMatches = (relevantMatches.length > 0 ? relevantMatches : allMatches.slice(0, 1)).slice(0, TOP_N);
   const selectedMatch = selectedRoleId ? allMatches.find((m) => m.role.id === selectedRoleId) : null;
   const roadmap = useMemo(() => (selectedMatch ? buildRoadmap(profile, selectedMatch) : null), [selectedMatch, profile]);
 
-  const readyToAnalyze = hasChosenSource && !profile.isEmpty && !isParsingFile;
+  const readyToAnalyze =
+    hasChosenSource &&
+    !profile.isEmpty &&
+    !isParsingFile &&
+    !(isCareerPilotSelected && savedResumesLoading);
 
   return (
     <DashboardLayout>
@@ -264,7 +300,11 @@ export default function CareerGuidance() {
               </div>
             )}
 
-            {isCareerPilotSelected && profile.isEmpty && (
+            {isCareerPilotSelected && savedResumesLoading && (
+              <div className="max-w-xl mx-auto text-center text-gray-500 py-10">Loading your saved resumes…</div>
+            )}
+
+            {isCareerPilotSelected && !savedResumesLoading && profile.isEmpty && (
               <div className="max-w-xl mx-auto border border-dashed border-gray-300 rounded-2xl bg-white p-10 text-center">
                 <FileWarning className="w-10 h-10 mx-auto mb-4 text-gray-400" />
                 <h3 className="text-lg font-semibold text-gray-800 mb-2">No CareerPilot resume found.</h3>

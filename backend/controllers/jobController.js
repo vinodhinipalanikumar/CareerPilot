@@ -97,14 +97,23 @@ async function searchJobs(req, res) {
     }
 
     const profile = extractJobProfile(resumeLike);
-    const effectiveLocation = "India";
+    // ROOT CAUSE FIX (requirement: "Pan-India by default, but respect an
+    // explicit user-selected location"): this previously hardcoded
+    // `effectiveLocation = "India"` unconditionally, silently discarding
+    // whatever the user typed into the search filters' location field —
+    // so a location the user explicitly chose was never actually sent to
+    // either provider. Adzuna is country-scoped (see adzunaService.js,
+    // `country=in`), so leaving `where` unset there already IS a Pan-India
+    // search; only set a specific place when the user actually asked for
+    // one. Jooble isn't country-scoped, so it still needs an explicit
+    // "India" fallback when nothing more specific was given.
+    const userLocation = String(location || "").trim();
+    const effectiveLocation = userLocation; // "" -> Pan-India (each service's own fallback handles it)
     const queries = buildSearchQueries(profile, keyword);
 
     const { jobs: rawJobs, providerErrors, providersTried } = await searchAllProviders(queries, {
-  location: effectiveLocation,
-});     
-  
-
+      location: effectiveLocation,
+    });
     if (providersTried.length === 0) {
       const isDev = process.env.NODE_ENV !== "production";
       return res.status(503).json({
