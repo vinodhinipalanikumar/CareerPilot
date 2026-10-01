@@ -88,11 +88,26 @@ export const ROLES = [
     supportingSkills: ["firebase", "sql"],
   },
   {
-    id: "mobile-app-developer",
-    title: "Mobile App Developer (Cross-Platform)",
+    // ROOT CAUSE (reproduced with a Flutter/Dart/Firebase test resume): this
+    // single "Cross-Platform" role required React Native + JavaScript —
+    // skills a Flutter-only candidate never has — dragging required-tier
+    // coverage to 0 and the resulting fit score below MIN_FIT_SCORE no
+    // matter how strong their actual Flutter/Dart evidence was. A resume
+    // built entirely around Flutter got ZERO role suggestions. Split into
+    // two roles, one per real-world stack, so each is judged on the skills
+    // that stack actually uses.
+    id: "react-native-developer",
+    title: "Mobile App Developer (React Native)",
     requiredSkills: ["react native", "javascript"],
-    importantSkills: ["flutter", "dart", "rest api", "git"],
-    supportingSkills: ["firebase", "typescript"],
+    importantSkills: ["typescript", "rest api", "git"],
+    supportingSkills: ["firebase", "android", "ios"],
+  },
+  {
+    id: "flutter-developer",
+    title: "Flutter Developer",
+    requiredSkills: ["flutter", "dart"],
+    importantSkills: ["firebase", "rest api", "git"],
+    supportingSkills: ["android", "ios", "sql"],
   },
   {
     id: "qa-test-engineer",

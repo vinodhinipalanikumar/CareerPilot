@@ -10,6 +10,7 @@ import {
   FileText, ScanSearch, Compass, Mic, Plus, ArrowRight,
 } from "lucide-react";
 import DashboardLayout from "../layouts/DashboardLayout";
+import DeleteResumeModal from "../components/DeleteResumeModal";
 import { getUser } from "../utils/auth";
 import { resumesAPI } from "../utils/api";
 import { getTemplateById } from "../data/templateRegistry";
@@ -77,6 +78,12 @@ export default function Dashboard() {
   const [loadingResumes, setLoadingResumes] = useState(true);
   const [resumesError, setResumesError] = useState("");
   const [deletingId, setDeletingId] = useState(null);
+  // PROBLEM 3 fix: the resume pending confirmation, instead of a blocking
+  // window.confirm(). Holding the whole resume (not just the id) lets the
+  // modal show its actual title.
+  const [resumeToDelete, setResumeToDelete] = useState(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [deleteSuccessMessage, setDeleteSuccessMessage] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -97,16 +104,36 @@ export default function Dashboard() {
     };
   }, []);
 
-  async function handleDelete(id) {
-    const confirmed = window.confirm("Are you sure you want to delete this resume?");
-    if (!confirmed) return;
+  function requestDelete(resume) {
+    setDeleteError("");
+    setResumeToDelete(resume);
+  }
 
+  function cancelDelete() {
+    // Guard against closing mid-request (also disabled on the button itself,
+    // but double-guarding here prevents a stray click from dropping the
+    // modal while the DELETE request is still in flight).
+    if (deletingId) return;
+    setResumeToDelete(null);
+    setDeleteError("");
+  }
+
+  async function confirmDelete() {
+    if (!resumeToDelete || deletingId) return; // prevent accidental double deletion
+    const id = resumeToDelete.id;
     setDeletingId(id);
+    setDeleteError("");
     try {
+      // Uses the existing delete API, which operates on the real MongoDB
+      // resume _id (see resumesAPI.delete / backend resumeController.js,
+      // which also verifies req.user === resume.user server-side).
       await resumesAPI.delete(id);
       setResumes((prev) => prev.filter((r) => r.id !== id));
+      setResumeToDelete(null);
+      setDeleteSuccessMessage(`"${resumeToDelete.title || "Resume"}" was deleted.`);
+      setTimeout(() => setDeleteSuccessMessage(""), 4000);
     } catch (err) {
-      alert(err.message || "Could not delete this resume. Please try again.");
+      setDeleteError(err.message || "Could not delete this resume. Please try again.");
     } finally {
       setDeletingId(null);
     }
@@ -163,6 +190,12 @@ export default function Dashboard() {
             </button>
           </div>
 
+          {deleteSuccessMessage && (
+            <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-4 py-3 mb-4">
+              {deleteSuccessMessage}
+            </p>
+          )}
+
           {loadingResumes && <p className="text-gray-500 text-sm">Loading your resumes…</p>}
 
           {!loadingResumes && resumesError && (
@@ -200,7 +233,7 @@ export default function Dashboard() {
                         Edit
                       </button>
                       <button
-                        onClick={() => handleDelete(resume.id)}
+                        onClick={() => requestDelete(resume)}
                         disabled={deletingId === resume.id}
                         className="text-red-500 hover:underline disabled:opacity-60"
                       >
@@ -241,6 +274,16 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {resumeToDelete && (
+        <DeleteResumeModal
+          resumeTitle={resumeToDelete.title}
+          isDeleting={deletingId === resumeToDelete.id}
+          errorMessage={deleteError}
+          onCancel={cancelDelete}
+          onConfirm={confirmDelete}
+        />
+      )}
     </DashboardLayout>
   );
 }

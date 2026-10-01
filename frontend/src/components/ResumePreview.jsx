@@ -321,6 +321,20 @@ export default function ResumePreview() {
               disabled={isDownloadingDocx}
               className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-lg
                          hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              // KNOWN LIMITATION (found during this audit, not fully fixed):
+              // generateResumeDoc() only ever builds ONE fixed .docx layout
+              // (styled after Professional Classic) — it has no idea which
+              // of the 16 visual templates is selected here. So picking any
+              // other template and downloading DOCX produces a document
+              // that does NOT visually match this on-screen preview. A real
+              // fix means a template-aware .docx renderer for all 16
+              // templates, which is out of scope for this pass — this
+              // tooltip exists so the mismatch is disclosed, not silent.
+              title={
+                selectedTemplateId !== templateRegistry[0].id
+                  ? "Note: DOCX download currently uses a standard ATS-friendly layout, not the visual template selected below. Use 'Download PDF' to get an exact match of what you see here."
+                  : undefined
+              }
             >
               {isDownloadingDocx ? "Preparing..." : "Download DOCX"}
             </button>
@@ -335,6 +349,12 @@ export default function ResumePreview() {
               Download PDF
             </button>
           </div>
+
+          {selectedTemplateId !== templateRegistry[0].id && (
+            <p className="text-center text-xs text-amber-600 mt-2">
+              Download DOCX currently uses a standard layout that may not match the template shown below — use Download PDF for an exact match.
+            </p>
+          )}
 
           {saveMessage && (
             <p

@@ -318,7 +318,13 @@ function splitSectionIntoEntryGroups(lines) {
     .map((l, i) => (NUMBERED_LINE_PATTERN.test(l) ? i : -1))
     .filter((i) => i !== -1);
 
-  if (numberedIndexes.length > 1) {
+  // BUG FIX (reproduced): this previously required 2+ numbered lines before
+  // stripping the "1." prefix at all, so a section with exactly ONE numbered
+  // entry ("1. Career Management System") fell through to the fallback
+  // `return [lines]` below with the leading "1. " left glued onto the
+  // project/entry title verbatim. A single numbered entry is just as
+  // unambiguous a signal as two, so this now triggers on >= 1.
+  if (numberedIndexes.length >= 1) {
     const groups = [];
     numberedIndexes.forEach((startIdx, i) => {
       const endIdx = i + 1 < numberedIndexes.length ? numberedIndexes[i + 1] : lines.length;
@@ -379,7 +385,16 @@ function buildExperienceEntry(group, fallbackTitle) {
   const company = possibleCompany && possibleCompany.length < 60 && !DATE_RANGE_PATTERN.test(possibleCompany)
     ? possibleCompany
     : "";
-  const descriptionLines = nonTechLines.slice(company ? 2 : 1);
+  const descriptionLines = nonTechLines
+    .slice(company ? 2 : 1)
+    // BUG FIX (reproduced): the date-range line (e.g. "Jun 2024 - Aug 2024")
+    // was left inside descriptionLines AND separately extracted into
+    // `dateRange` above, then both were joined together — producing
+    // responsibilities text with the date range duplicated verbatim
+    // ("Jun 2024 - Aug 2024 — Jun 2024 - Aug 2024 Worked on..."). Strip any
+    // line that IS a date range from the description, since it's already
+    // represented by `dateRange`.
+    .filter((l) => !DATE_RANGE_PATTERN.test(l));
   return {
     title,
     company,
@@ -408,7 +423,27 @@ export function parseResumeText(rawText, formatRisk = null) {
     );
   }
 
-  const detectedSkills = scanTextForKnownSkills(text).map((canonical) => ({
+  // BUG FIX (reproduced): scanTextForKnownSkills(text) scans the WHOLE
+  // document, including the contact-info lines that just gave us
+  // personalInfo.github/linkedin above (e.g. "GitHub: github.com/johndoe").
+  // Since "github" is (correctly) a recognized tool skill for resumes that
+  // genuinely list "Git, GitHub" under Skills, that same word in a plain
+  // contact link was being counted as a detected SKILL too — inflating
+  // skill counts with something that was never claimed as a skill at all.
+  // Strip the lines that produced the contact links before scanning for
+  // skills, so a profile link is never double-counted as a technical skill.
+  const skillScanText = lines
+    .filter(
+      (l) =>
+        !GITHUB_LABEL_PATTERN.test(l) &&
+        !LINKEDIN_LABEL_PATTERN.test(l) &&
+        !PORTFOLIO_LABEL_PATTERN.test(l) &&
+        !GITHUB_URL_PATTERN.test(l) &&
+        !LINKEDIN_URL_PATTERN.test(l)
+    )
+    .join("\n");
+
+  const detectedSkills = scanTextForKnownSkills(skillScanText).map((canonical) => ({
     category: "Detected",
     skillName: displaySkill(canonical),
     proficiency: "",

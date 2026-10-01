@@ -1,9 +1,19 @@
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { isAuthenticated, logout } from "../utils/auth";
+import { isAuthenticated, logout, onAuthChange } from "../utils/auth";
 
 function Navbar() {
   const navigate = useNavigate();
-  const loggedIn = isAuthenticated();
+  // Reactive, not just computed once at mount: isAuthenticated() also
+  // validates token expiry now (see utils/auth.js), and onAuthChange lets
+  // this update immediately after a login/logout elsewhere in the app,
+  // instead of only being correct after a full remount.
+  const [loggedIn, setLoggedIn] = useState(() => isAuthenticated());
+
+  useEffect(() => {
+    setLoggedIn(isAuthenticated());
+    return onAuthChange(() => setLoggedIn(isAuthenticated()));
+  }, []);
 
   function handleLogout() {
     logout();

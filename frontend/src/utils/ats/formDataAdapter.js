@@ -34,6 +34,8 @@ export function fromCareerPilotFormData(formData) {
     volunteerWork: arr(data.volunteerWork),
     workshops: arr(data.workshops),
     conferences: arr(data.conferences),
+    interests: arr(data.interests),
+    references: arr(data.references),
     meta: { source: "careerpilot" },
   };
 }

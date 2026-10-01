@@ -18,6 +18,46 @@ function buildInitialState(sections) {
   return state;
 }
 
+// ROOT CAUSE OF THE RESUME BUILDER WHITE SCREEN (reproduced, not assumed):
+// Every render below reads `formData[section.key]` (and, for repeatable
+// sections, calls `.map`/`.forEach`/spreads it) with NO fallback — see
+// FieldRenderer's `value={formData[section.key][field.name]}`, the
+// accordion's `formData[section.key].map(...)`, `validateWholeForm`, and
+// `addEntry`'s `[...prev[sectionKey], ...]`. Before this fix, hydration just
+// did `setFormData(saved.formData || buildInitialState(...))` — i.e. it
+// trusted whatever MongoDB returned *wholesale*. Any saved resume missing
+// even one section key (an older document saved before a section existed,
+// data touched by a script/API call outside this UI, a partially-written
+// document from a failed save, etc.) made `formData[section.key]` `undefined`,
+// and the very next render threw a plain TypeError. There is no error
+// boundary anywhere in this app (checked main.jsx/App.jsx), so React
+// unmounts the whole tree on that throw — a completely white page, with the
+// real error visible only in the browser console.
+// FIX: reconcile whatever comes back from MongoDB (or was ever set) against
+// the CURRENT resumeSections shape on every hydration, so `formData` is
+// guaranteed to have every key, with the right type (array vs object),
+// no matter what was actually persisted. This is defensive at the source
+// (hydration) — the per-render accesses below are also hardened as a second
+// line of defense so a future config change can never reintroduce this.
+function reconcileFormData(rawSaved, sections) {
+  const base = buildInitialState(sections);
+  if (!rawSaved || typeof rawSaved !== "object" || Array.isArray(rawSaved)) return base;
+
+  const merged = {};
+  sections.forEach((s) => {
+    const savedSection = rawSaved[s.key];
+    if (s.repeatable) {
+      merged[s.key] = Array.isArray(savedSection) ? savedSection : base[s.key];
+    } else {
+      merged[s.key] =
+        savedSection && typeof savedSection === "object" && !Array.isArray(savedSection)
+          ? { ...base[s.key], ...savedSection }
+          : base[s.key];
+    }
+  });
+  return merged;
+}
+
 export default function ResumeBuilder() {
   const navigate = useNavigate(); // NEW
   const { resumeId: routeResumeId } = useParams(); // present only when editing a saved resume
@@ -132,7 +172,7 @@ export default function ResumeBuilder() {
         const data = await resumesAPI.getById(routeResumeId);
         const saved = data?.resume;
         if (!cancelled && saved) {
-          setFormData(saved.formData || buildInitialState(resumeSections));
+          setFormData(reconcileFormData(saved.formData, resumeSections));
           setSelectedFont(saved.font || "Arial");
           setTemplateId(saved.templateId || "professional-classic");
           setTitle(saved.title || "My Resume");
@@ -190,7 +230,7 @@ export default function ResumeBuilder() {
   const updateSingleField = (sectionKey, fieldName, value) => {
     setFormData((prev) => ({
       ...prev,
-      [sectionKey]: { ...prev[sectionKey], [fieldName]: value },
+      [sectionKey]: { ...(prev[sectionKey] || {}), [fieldName]: value },
     }));
   };
 
@@ -198,7 +238,7 @@ export default function ResumeBuilder() {
     const id = crypto.randomUUID();
     setFormData((prev) => ({
       ...prev,
-      [sectionKey]: [...prev[sectionKey], { id }],
+      [sectionKey]: [...(Array.isArray(prev[sectionKey]) ? prev[sectionKey] : []), { id }],
     }));
     setOpenSections((prev) => ({ ...prev, [sectionKey]: true }));
     setEditingId((prev) => ({ ...prev, [sectionKey]: id }));
@@ -207,7 +247,7 @@ export default function ResumeBuilder() {
   const updateEntryField = (sectionKey, id, fieldName, value) => {
     setFormData((prev) => ({
       ...prev,
-      [sectionKey]: prev[sectionKey].map((entry) =>
+      [sectionKey]: (Array.isArray(prev[sectionKey]) ? prev[sectionKey] : []).map((entry) =>
         entry.id === id ? { ...entry, [fieldName]: value } : entry
       ),
     }));
@@ -216,7 +256,7 @@ export default function ResumeBuilder() {
   const deleteEntry = (sectionKey, id) => {
     setFormData((prev) => ({
       ...prev,
-      [sectionKey]: prev[sectionKey].filter((entry) => entry.id !== id),
+      [sectionKey]: (Array.isArray(prev[sectionKey]) ? prev[sectionKey] : []).filter((entry) => entry.id !== id),
     }));
     setErrors((prev) => {
       const copy = { ...prev };
@@ -253,9 +293,10 @@ export default function ResumeBuilder() {
 
     resumeSections.forEach((section) => {
       if (!section.repeatable) {
+        const sectionData = formData[section.key] || {};
         const fieldErrors = {};
         section.fields.forEach((field) => {
-          if (field.required && !formData[section.key][field.name]) {
+          if (field.required && !sectionData[field.name]) {
             fieldErrors[field.name] = `${field.label} is required.`;
           }
         });
@@ -264,7 +305,7 @@ export default function ResumeBuilder() {
           sectionsToOpen[section.key] = true;
         }
       } else {
-        formData[section.key].forEach((entry) => {
+        (formData[section.key] || []).forEach((entry) => {
           const entryErrors = validateEntry(section, entry);
           if (Object.keys(entryErrors).length > 0) {
             allErrors[`${section.key}-${entry.id}`] = entryErrors;
@@ -344,7 +385,7 @@ export default function ResumeBuilder() {
                 <FieldRenderer
                   key={field.name}
                   field={field}
-                  value={formData[section.key][field.name]}
+                  value={(formData[section.key] || {})[field.name]}
                   onChange={(val) => updateSingleField(section.key, field.name, val)}
                   error={errors[section.key]?.[field.name]}
                 />
@@ -352,7 +393,7 @@ export default function ResumeBuilder() {
 
             {section.repeatable && (
               <>
-                {formData[section.key].map((entry) => {
+                {(formData[section.key] || []).map((entry) => {
                   const isEditing = editingId[section.key] === entry.id;
                   const entryErrors = errors[`${section.key}-${entry.id}`] || {};
                   return (
